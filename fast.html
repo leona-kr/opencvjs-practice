@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>FAST 코너 검출 예제</title>
+<link rel="icon" href="data:;base64,=">
+<style>
+body{margin: 0;padding: 0;}
+canvas, img{vertical-align: top;}
+</style>
+</head>
+<body>
+<div>
+	<img src="" alt="" id="input"/>
+</div>
+<div>
+	<canvas id="output"></canvas><br/>
+	<canvas id="output1"></canvas><br/>
+	<canvas id="output2"></canvas><br/>
+</div>
+
+<script>
+	function init(initCallback){
+		const OPENCV_URL = "https://docs.opencv.org/3.4/opencv.js";
+		const loadStartTime = new Date();
+	  const loadOpenCv = (onloadCallback) => {
+	    let script = document.createElement('script');
+	    script.setAttribute('async', '');
+	    script.setAttribute('type', 'text/javascript');
+	    script.addEventListener('load', () => {
+	      if (cv.getBuildInformation){
+	        console.log(cv.getBuildInformation());
+	        onloadCallback();
+	      } else {
+	        // WASM
+	        cv['onRuntimeInitialized']=()=>{
+	          // console.log(cv.getBuildInformation());
+	          onloadCallback();
+	        }
+				}
+				
+				const loadEndTime = new Date();
+				console.log("opencv.js loaded! ("+ (loadEndTime - loadStartTime) +"ms)");
+	    });
+	    script.addEventListener('error', () => {
+	      console.warn('Failed to load ' + OPENCV_URL);
+	    });
+	    script.src = OPENCV_URL;
+	    const node = document.getElementsByTagName('script')[0];
+	    node.parentNode.insertBefore(script, node);
+		};
+
+		loadOpenCv(initCallback);
+	}
+
+	// goodFeaturesToTrack 안된다... 두 번째 인자 타입을 모르겠다
+	function detectCorners(){
+		const output = document.getElementById('output');
+		const img = document.getElementById("input");
+		img.setAttribute("src","./building.jpg");
+		img.onload = () => {
+			let src = cv.imread("input");
+			let dst = new cv.Mat(img.height, img.width, cv.CV_8UC4);
+			let gray = new cv.Mat();
+
+			output.width = img.width;
+			output.height = img.height;
+
+			let corners = new cv.MatVector();//(img.height, img.width, cv.CV_8UC4); // ???
+			// let corners = new cv.PointVector(); // ???
+			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+			cv.goodFeaturesToTrack(src, corners, 40, 0.01, 10);
+			// console.log(corners.size());
+			// gray.copyTo(dst);
+			// cv.imshow(output, dst);
+			src.delete();gray.delete();dst.delete();
+		};
+	}
+
+	// 엣지 검출 잘됨
+	function canny(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./building.jpg");
+		img.onload = () => {
+			let src = cv.imread("input");
+			let dst = new cv.Mat();
+
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+			cv.Canny(src, dst, 50, 100, 3, false);
+
+			cv.imshow("output", dst);
+			src.delete();
+			dst.delete();
+		};
+	}
+
+	// x 방향 y 방향으로 엣지 검출 마스크
+	function sobel(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./building.jpg");
+		img.onload = () => {
+			const ctx = document.getElementById('output').getContext('2d');
+			const ctx2 = document.getElementById('output2').getContext('2d');
+
+			let src = cv.imread("input");
+			let dst = new cv.Mat();
+			let dx = new cv.Mat();
+			let dy = new cv.Mat();
+
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+
+			cv.Sobel(src, dx, cv.CV_8U, 1, 0, 3, 1, 0, cv.BORDER_DEFAULT);
+			cv.Sobel(src, dy, cv.CV_8U, 0, 1, 3, 1, 0, cv.BORDER_DEFAULT);
+
+			cv.imshow("output", dx); // dx, dy  합친것
+			cv.imshow("output1", dx);
+			cv.imshow("output2", dy);
+
+			src.delete();
+			dst.delete();
+			dx.delete();
+			dy.delete();
+
+			let datax = ctx.getImageData(0,0,img.width, img.height);
+			let datay = ctx2.getImageData(0,0,img.width, img.height);
+			const datax2 = datax.data;
+			const datay2 = datay.data;
+			for(var i=0;i<datax2.length;i+=4){
+				if(i%4 === 3) continue;
+				datax2[i] = (datax2[i] + datay2[i])*.5;
+				datax2[i+1] = (datax2[i+1] + datay2[i+1])*.5;
+				datax2[i+2] = (datax2[i+2] + datay2[i+2])*.5;
+			}
+			ctx.putImageData(datax, 0, 0);
+		};
+	}
+
+	// 전혀 예상되지 않은 결과가 나온다. js는 성능이 안나오는 듯??
+	function HoughLines(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./building.jpg");
+		img.onload = () =>{
+			let src = cv.imread('input');
+			let dst_canny = new cv.Mat();
+			let dst = cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC3);
+			let lines = new cv.Mat();
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+
+			cv.Canny(src, dst_canny, 50, 200, 3);
+
+			cv.Canny(src, src, 50, 200, 3);
+			// You can try more different parameters
+			cv.HoughLines(src, lines, 1, Math.PI / 180,
+										30, 0, 0, 0, Math.PI);
+			// draw lines
+			for (let i = 0; i < lines.rows; ++i) {
+					let rho = lines.data32F[i * 2];
+					let theta = lines.data32F[i * 2 + 1];
+					let a = Math.cos(theta);
+					let b = Math.sin(theta);
+					let x0 = a * rho;
+					let y0 = b * rho;
+					let startPoint = {x: x0 - 1000 * b, y: y0 + 1000 * a};
+					let endPoint = {x: x0 + 1000 * b, y: y0 - 1000 * a};
+					cv.line(dst, startPoint, endPoint, [255, 0, 0, 255]);
+			}
+			cv.imshow('output1', dst);
+			cv.imshow('output', dst_canny);
+			src.delete(); dst.delete(); lines.delete();
+		};
+	}
+
+	// 엣지 검출 인가? 외곽선을 그리네?
+	function houghLinesP(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./building.jpg");
+		img.onload = () =>{
+			let src = cv.imread('input');
+			let dst = cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC3);
+			let lines = new cv.Mat();
+			let color = new cv.Scalar(255, 0, 0);
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+			// src.copyTo(dst);
+			cv.Canny(src, src, 50, 200, 3);
+			// You can try more different parameters
+			cv.HoughLinesP(src, lines, 1, Math.PI / 180, 2, 0, 0);
+
+			// draw lines
+			for (let i = 0; i < lines.rows; ++i) {
+			    let startPoint = new cv.Point(lines.data32S[i * 4], lines.data32S[i * 4 + 1]);
+			    let endPoint = new cv.Point(lines.data32S[i * 4 + 2], lines.data32S[i * 4 + 3]);
+			    cv.line(dst, startPoint, endPoint, color);
+			}
+			cv.imshow('output', dst);
+			src.delete(); dst.delete(); lines.delete();
+		};
+	}
+
+	// 정상적인 결과를 출력하지 못한다
+	function huoghCircles(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./coins.png");
+		img.onload = () => {
+			let src = cv.imread('input');
+			let dst = cv.Mat.zeros(src.rows, src.cols, cv.CV_8U);
+			let circles = new cv.Mat();
+			let color = new cv.Scalar(255, 0, 0);
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+			// You can try more different parameters
+			cv.HoughCircles(src, circles, cv.HOUGH_GRADIENT,
+											1, 45, 75, 40, 0, 0);
+			// draw circles
+			for (let i = 0; i < circles.cols; ++i) {
+				let x = circles.data32F[i * 3];
+				let y = circles.data32F[i * 3 + 1];
+				let radius = circles.data32F[i * 3 + 2];
+				let center = new cv.Point(x, y);
+				cv.circle(dst, center, radius, color);
+			}
+			console.log(circles.cols)
+			cv.imshow('output', dst);
+			src.delete(); dst.delete(); circles.delete();
+		};
+	}
+
+	// 외곽선 검출 성능 그냥... 그래...
+	function contours(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./building.jpg");
+		img.onload = () => {
+			let src = cv.imread('input');
+			let dst = cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC3);
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+			cv.threshold(src, src, 100, 200, cv.THRESH_BINARY);
+			let contours = new cv.MatVector();
+			let hierarchy = new cv.Mat();
+			let poly = new cv.MatVector();
+			cv.findContours(src, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+			// approximates each contour to polygon
+			for (let i = 0; i < contours.size(); ++i) {
+			    let tmp = new cv.Mat();
+			    let cnt = contours.get(i);
+			    // You can try more different parameters
+			    cv.approxPolyDP(cnt, tmp, 3, true);
+			    poly.push_back(tmp);
+			    cnt.delete(); tmp.delete();
+			}
+			// draw contours with random Scalar
+			for (let i = 0; i < contours.size(); ++i) {
+			    let color = new cv.Scalar(Math.round(Math.random() * 255), Math.round(Math.random() * 255),
+			                              Math.round(Math.random() * 255));
+			    cv.drawContours(dst, poly, i, color, 1, 8, hierarchy, 0);
+			}
+			cv.imshow('output', dst);
+
+			// lenna.bmp 파일로 c++은 1565개, js는 1255개
+			// 성능 차이가 난다. jpg로 하면 712개
+			console.log(contours.size());
+
+			src.delete(); dst.delete(); hierarchy.delete(); contours.delete(); poly.delete();
+		};
+	}
+
+	// 이진화
+	function threshold(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./keyboard.bmp");
+		img.onload = () => {
+			let src = cv.imread('input');
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+			let dst = new cv.Mat();
+			
+			// type 종류
+			// cv.THRESH_BINARY
+			// cv.THRESH_BINARY_INV
+			// cv.THRESH_TRUNC
+			// cv.THRESH_TOZERO
+			// cv.THRESH_OTSU
+			// cv.THRESH_TRIANCLE
+			// 전체적으로 c++ 보다 좀 러프하다, 세 번째 인자값인 thresh 값에 따라 많이 바뀐다
+			cv.threshold(src, dst, 177, 200, cv.THRESH_OTSU);
+			cv.imshow('output', dst);
+
+			src.delete();
+			dst.delete();
+		};
+	}
+
+	// 영역 분할 레이블링
+	// 이건 쫌 아닌듯 검출 전혀 안되네...
+	function labeling(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./keyboard.bmp");
+		img.onload = () => {
+			let src = cv.imread('input');
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+
+			let dst = new cv.Mat();
+			cv.threshold(src, dst, 177, 255, cv.THRESH_OTSU);
+			cv.imshow('output1', dst);
+
+			let labels = new cv.Mat();
+			let stats = new cv.Mat();
+			let centroids = new cv.Mat();
+			let cnt = cv.connectedComponentsWithStats(dst, labels, stats, centroids);
+			
+			console.log("cnt", cnt);
+			let tmp = 0;
+			src.copyTo(dst);
+			for (var i=0;i<cnt;i++){
+				const p = stats.ptr(i);
+				console.log(stats.ptr(i));
+				if(p[4] < 20) continue;
+				tmp++;
+
+				const p1 = new cv.Point(p[0], p[1]);
+				const p2 = new cv.Point(p[2], p[3]);
+				cv.rectangle(dst, p1, p2, [106, 201, 0, 255], 2);
+
+				// let point1 = new cv.Point(face.x, face.y);
+				// let point2 = new cv.Point(face.x + face.width, face.y + face.height);
+				// cv.rectangle(dst, point1, point2, [106, 201, 0, 255], 2);
+			}
+			cv.imshow('output', dst);
+
+			console.log("tmp", tmp);
+
+			src.delete(); dst.delete(); labels.delete(); stats.delete(); centroids.delete();
+		};
+	}
+
+	// 외곽선 찾기
+	// 간단한 이미지(milkydrop.bmp)는 c++과 같은 성능이 나오는데
+	// 비교적 복잡한 이미지(lenna.bmp)는 c++과 비교하여 contours.size() 가 절반 수준
+	function findContours(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./milkdrop.bmp");
+		img.onload = () => {
+			let src = cv.imread('input');
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+
+			let src_bin = new cv.Mat();
+			cv.threshold(src, src_bin, 177, 255, cv.THRESH_OTSU);
+			// cv.imshow('output1', src_bin);
+
+			let contours = new cv.MatVector();
+			let hierarchy = new cv.Mat();
+			cv.findContours(src_bin, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
+			// cv.RETR_LIST : 1 / cv.RETR_CCOMP : 2
+			// cv.CHAIN_APPROX_NONE : 1 / cv.CHAIN_APPROX_SIMPLE : 2
+
+			let dst = cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC3);
+			for(var i=0;i<contours.size();i++){
+				let color = new cv.Scalar(Math.floor(Math.random()*255), Math.floor(Math.random()*255), Math.floor(Math.random()*255));
+				cv.drawContours(dst, contours, i, color, 1, cv.LINE_8, hierarchy, 100);
+			}
+
+			console.log(contours.size());
+			cv.imshow("output", dst);
+
+			src.delete(); src_bin.delete(); contours.delete(); dst.delete();
+		};
+	}
+
+	// 다각형 검출 프로그램
+	function approxPolyDP(){
+		const img = document.getElementById("input");
+		img.setAttribute("src","./polygon.bmp");
+		img.onload = () => {
+			// 3) 외곽선 근사화
+			// 4) convex가 아닌 것은 제외
+			// 5) 꼭지점 개수 확인
+			// 5-1) 삼각형, 사각형 검출
+			// 5-2) 원 판별
+
+			let src = cv.imread("input");
+			cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+
+			// 1) 이진화
+			let src_bin = new cv.Mat();
+			cv.threshold(src, src_bin, 177, 200, cv.THRESH_OTSU);
+
+			// 2) 외곽선 찾기
+			let contours = new cv.MatVector();
+			let hierarchy = new cv.Mat();
+			let poly = new cv.MatVector();
+			cv.findContours(src, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+			
+			for (let i = 0; i < contours.size(); ++i) {
+				let approx = new cv.Mat();
+			  let cnt = contours.get(i);
+				cv.approxPolyDP(cnt, approx, cv.arcLength(contours.get(i), true)*0.02, true);
+				console.log(approx.size());
+				approx.delete();
+			}
+
+			src.delete(); src_bin.delete(); contours.delete(); hierarchy.delete(); poly.delete();
+		};
+	}
+
+	init(approxPolyDP);
+</script>
+</body>
+</html>
